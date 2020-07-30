@@ -8,6 +8,7 @@ using System.Text;
 using NHibernate.Properties;
 using NHibernate.Type;
 using NHibernate.Engine;
+using System.Linq.Expressions;
 
 namespace NHibernate.Util
 {
@@ -25,6 +26,143 @@ namespace NHibernate.Util
 
 		private static readonly MethodInfo Exception_InternalPreserveStackTrace =
 			typeof(Exception).GetMethod("InternalPreserveStackTrace", BindingFlags.Instance | BindingFlags.NonPublic);
+		/// <summary>
+		/// Extract the <see cref="MethodInfo"/> from a given expression.
+		/// </summary>
+		/// <typeparam name="TSource">The declaring-type of the method.</typeparam>
+		/// <param name="method">The method.</param>
+		/// <returns>The <see cref="MethodInfo"/> of the no-generic method or the generic-definition for a generic-method.</returns>
+		/// <seealso cref="MethodInfo.GetGenericMethodDefinition"/>
+		public static MethodInfo GetMethodDefinition<TSource>(Expression<Action<TSource>> method)
+		{
+			MethodInfo methodInfo = GetMethod(method);
+			return methodInfo.IsGenericMethod ? methodInfo.GetGenericMethodDefinition() : methodInfo;
+		}
+
+		/// <summary>
+		/// Extract the <see cref="MethodInfo"/> from a given expression.
+		/// </summary>
+		/// <typeparam name="TSource">The declaring-type of the method.</typeparam>
+		/// <param name="method">The method.</param>
+		/// <returns>The <see cref="MethodInfo"/> of the method.</returns>
+		public static MethodInfo GetMethod<TSource>(Expression<Action<TSource>> method)
+		{
+			if (method == null)
+				throw new ArgumentNullException(nameof(method));
+
+			return ((MethodCallExpression)method.Body).Method;
+		}
+
+		/// <summary>
+		/// Extract the <see cref="MethodInfo"/> from a given expression.
+		/// </summary>
+		/// <param name="method">The method.</param>
+		/// <returns>The <see cref="MethodInfo"/> of the no-generic method or the generic-definition for a generic-method.</returns>
+		/// <seealso cref="MethodInfo.GetGenericMethodDefinition"/>
+		public static MethodInfo GetMethodDefinition(Expression<System.Action> method)
+		{
+			MethodInfo methodInfo = GetMethod(method);
+			return methodInfo.IsGenericMethod ? methodInfo.GetGenericMethodDefinition() : methodInfo;
+		}
+
+		/// <summary>
+		/// Extract the <see cref="MethodInfo"/> from a given expression.
+		/// </summary>
+		/// <param name="method">The method.</param>
+		/// <returns>The <see cref="MethodInfo"/> of the method.</returns>
+		public static MethodInfo GetMethod(Expression<System.Action> method)
+		{
+			if (method == null)
+				throw new ArgumentNullException(nameof(method));
+
+			return ((MethodCallExpression)method.Body).Method;
+		}
+
+		/// <summary>
+		/// Get the <see cref="MethodInfo"/> for a public overload of a given method if the method does not match
+		/// given parameter types, otherwise directly yield the given method.
+		/// </summary>
+		/// <param name="method">The method for which finding an overload.</param>
+		/// <param name="parameterTypes">The arguments types of the overload to get.</param>
+		/// <returns>The <see cref="MethodInfo"/> of the method.</returns>
+		/// <remarks>Whenever possible, use GetMethod() instead for performance reasons.</remarks>
+		public static MethodInfo GetMethodOverload(MethodInfo method, params System.Type[] parameterTypes)
+		{
+			if (method == null)
+				throw new ArgumentNullException(nameof(method));
+			if (parameterTypes == null)
+				throw new ArgumentNullException(nameof(parameterTypes));
+
+			if (ParameterTypesMatch(method.GetParameters(), parameterTypes))
+				return method;
+
+			var overload = method.DeclaringType.GetMethod(method.Name,
+				(method.IsStatic ? BindingFlags.Static : BindingFlags.Instance) | BindingFlags.Public,
+				null, parameterTypes, null);
+
+			if (overload == null)
+				throw new InvalidOperationException(
+					$"No overload found for method '{method.DeclaringType.Name}.{method.Name}' and parameter types '{string.Join(", ", parameterTypes.Select(t => t.Name))}'");
+
+			return overload;
+		}
+
+		/// <summary>
+		/// Gets the field or property to be accessed.
+		/// </summary>
+		/// <typeparam name="TSource">The declaring-type of the property.</typeparam>
+		/// <typeparam name="TResult">The type of the property.</typeparam>
+		/// <param name="property">The expression representing the property getter.</param>
+		/// <returns>The <see cref="MemberInfo"/> of the property.</returns>
+		public static MemberInfo GetProperty<TSource, TResult>(Expression<Func<TSource, TResult>> property)
+		{
+			if (property == null)
+			{
+				throw new ArgumentNullException(nameof(property));
+			}
+			return ((MemberExpression)property.Body).Member;
+		}
+
+		internal static bool ParameterTypesMatch(ParameterInfo[] parameters, System.Type[] types)
+		{
+			if (parameters.Length != types.Length)
+			{
+				return false;
+			}
+
+			for (int i = 0; i < parameters.Length; i++)
+			{
+				if (parameters[i].ParameterType == types[i])
+				{
+					continue;
+				}
+
+				if (parameters[i].ParameterType.ContainsGenericParameters && types[i].ContainsGenericParameters &&
+					parameters[i].ParameterType.GetGenericArguments().Length == types[i].GetGenericArguments().Length)
+				{
+					continue;
+				}
+
+				return false;
+			}
+
+			return true;
+		}
+
+		internal static System.Type GetPropertyOrFieldType(this MemberInfo memberInfo)
+		{
+			if (memberInfo is PropertyInfo propertyInfo)
+			{
+				return propertyInfo.PropertyType;
+			}
+
+			if (memberInfo is FieldInfo fieldInfo)
+			{
+				return fieldInfo.FieldType;
+			}
+
+			return null;
+		}
 
 		/// <summary>
 		/// Determine if the specified <see cref="System.Type"/> overrides the
@@ -253,7 +391,7 @@ namespace NHibernate.Util
 		/// type cannot be found then the assembly is loaded using
 		/// <see cref="Assembly.Load(string)" />.
 		/// </remarks>
-		public static System.Type TypeFromAssembly(AssemblyQualifiedTypeName name, bool throwOnError)
+		public static System.Type TypeFromAssembly(this AssemblyQualifiedTypeName name, bool throwOnError)
 		{
 			try
 			{
@@ -461,6 +599,17 @@ namespace NHibernate.Util
 		{
 			Exception_InternalPreserveStackTrace.Invoke(ex.InnerException, new Object[] { });
 			return ex.InnerException;
+		}
+		/// <summary>
+		/// Ensures an exception current stack-trace will be preserved if the exception is explicitly rethrown.
+		/// </summary>
+		/// <param name="ex">
+		/// The <see cref="Exception"/> which current stack-trace is to be preserved in case of explicit rethrow.
+		/// </param>
+		/// <returns>The unwrapped exception.</returns>
+		internal static void PreserveStackTrace(Exception ex)
+		{
+			Exception_InternalPreserveStackTrace.Invoke(ex, Array.Empty<object>());
 		}
 
 		/// <summary>

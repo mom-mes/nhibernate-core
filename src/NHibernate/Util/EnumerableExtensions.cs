@@ -76,6 +76,11 @@ namespace NHibernate.Util
 			return null;
 		}
 
+		internal static TOutput[] ToArray<TInput, TOutput>(this TInput[] input, Converter<TInput, TOutput> converter)
+		{
+			return Array.ConvertAll(input, converter);
+		}
+
 		public static void ForEach<T>(this IEnumerable<T> query, Action<T> method)
 		{
 			foreach (T item in query)
